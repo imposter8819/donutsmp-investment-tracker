@@ -44,7 +44,58 @@ function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;',
 function totals(){let cost=0,value=0,realized=0;investments.forEach(x=>{cost+=x.qty*x.buy;value+=x.qty*x.current;realized+=x.sales.reduce((a,s)=>a+s.profit,0)});return{cost,value,realized,unrealized:value-cost,total:value-cost+realized}}
 function renderMetrics(){let t=totals();let items=[['Current holdings value',money(t.value),'Across all remaining items'],['Remaining cost basis',money(t.cost),'What your current holdings cost'],['Unrealized profit / loss',money(t.unrealized),pct(t.unrealized,t.cost)],['Total profit / loss',money(t.total),'Includes completed sales: '+money(t.realized)]];document.getElementById('metrics').innerHTML=items.map((a,i)=>'<div class="metric"><div class="label">'+a[0]+'</div><div class="value '+(i>1?(i===2?t.unrealized:t.total)>=0?'positive':'negative':'')+'">'+a[1]+'</div><div class="hint">'+a[2]+'</div></div>').join('')}
 function renderHoldings(){let el=document.getElementById('holdings');if(!investments.length){el.innerHTML='<div class="empty"><strong>No investments yet</strong>Add your first item below to start tracking its value and price history.</div>';return}el.innerHTML=investments.map(x=>{let cost=x.qty*x.buy,val=x.qty*x.current,pl=val-cost;return '<article class="holding"><div class="holding-head"><div><h3>'+esc(x.name)+'</h3><div class="muted" style="font-size:11px">'+fmt(x.qty)+' units held · '+x.history.length+' price records</div></div><span class="tag">ID '+esc(x.id.slice(-5))+'</span></div><div class="numbers"><div class="number"><span>Current value</span><b>'+money(val)+'</b></div><div class="number"><span>Unrealized P/L</span><b class="'+(pl>=0?'positive':'negative')+'">'+(pl>=0?'+':'')+money(pl)+'</b></div><div class="number"><span>Return</span><b class="'+(pl>=0?'positive':'negative')+'">'+pct(pl,cost)+'</b></div></div><div class="muted" style="font-size:11px">Buy: '+money(x.buy)+' / item &nbsp; · &nbsp; Current: '+money(x.current)+' / item</div><div class="holding-actions"><button class="btn" data-act="price" data-id="'+x.id+'">Update price</button><button class="btn" data-act="sell" data-id="'+x.id+'">Record sale</button><button class="btn" data-act="rename" data-id="'+x.id+'">Rename</button><button class="btn danger" data-act="delete" data-id="'+x.id+'">Delete</button></div></article>'}).join('')}
-function renderCharts(){if(typeof Chart==='undefined')return;if(barChart)barChart.destroy();if(scatterChart)scatterChart.destroy();const common={responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#b9c4d7',boxWidth:10,font:{size:10}}}},scales:{x:{ticks:{color:'#91a0b8'},grid:{color:'#263247'}},y:{beginAtZero:true,ticks:{color:'#91a0b8',callback:v=>fmt(v)},grid:{color:'#263247'},title:{display:true,text:'Total investment value (diamonds)',color:'#91a0b8'}}}};barChart=new Chart(document.getElementById('barChart'),{type:'bar',data:{labels:investments.map(x=>x.name),datasets:[{label:'Total purchase value',data:investments.map(x=>x.qty*x.buy),backgroundColor:'#7165c8',borderRadius:5},{label:'Total current value',data:investments.map(x=>x.qty*x.current),backgroundColor:'#50c99b',borderRadius:5}]},options:structuredClone(common)});let sets=investments.map((x,i)=>({label:x.name,data:x.history.map(p=>({x:p.date,y:p.price*(Number.isFinite(p.qty)?p.qty:x.qty)})),backgroundColor:['#a99aff','#51d6a0','#f5c96a','#ff8293','#66b9ed'][i%5],pointRadius:5}));scatterChart=new Chart(document.getElementById('scatterChart'),{type:'scatter',data:{datasets:sets},options:{...structuredClone(common),scales:{x:{type:'category',labels:[...new Set(investments.flatMap(x=>x.history.map(p=>p.date)))].sort(),ticks:{color:'#91a0b8',maxRotation:45,minRotation:20},grid:{color:'#263247'}},y:common.scales.y}}})}
+function renderCharts(){
+  if(typeof Chart==='undefined')return;
+  if(barChart){barChart.destroy();barChart=null}
+  if(scatterChart){scatterChart.destroy();scatterChart=null}
+  const valueAxis={beginAtZero:true,ticks:{color:'#91a0b8',callback:v=>fmt(v)},grid:{color:'#263247'},title:{display:true,text:'Total investment value (diamonds)',color:'#91a0b8'}};
+  const legend={labels:{color:'#b9c4d7',boxWidth:10,font:{size:10}}};
+  barChart=new Chart(document.getElementById('barChart'),{
+    type:'bar',
+    data:{
+      labels:investments.map(x=>x.name),
+      datasets:[
+        {label:'Total purchase value',data:investments.map(x=>Number(x.qty)*Number(x.buy)),backgroundColor:'#7165c8',borderRadius:5},
+        {label:'Total current value',data:investments.map(x=>Number(x.qty)*Number(x.current)),backgroundColor:'#50c99b',borderRadius:5}
+      ]
+    },
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend},scales:{
+      x:{ticks:{color:'#91a0b8'},grid:{color:'#263247'}},
+      y:valueAxis
+    }}
+  });
+  const dates=[...new Set(investments.flatMap(x=>(Array.isArray(x.history)?x.history:[]).map(p=>p.date).filter(Boolean)))].sort();
+  const palette=['#a99aff','#51d6a0','#f5c96a','#ff8293','#66b9ed'];
+  const datasets=investments.map((x,i)=>{
+    const byDate=new Map();
+    (Array.isArray(x.history)?x.history:[]).forEach(p=>{
+      const price=Number(p.price);
+      const quantity=Number.isFinite(Number(p.qty))?Number(p.qty):Number(x.qty);
+      if(p.date&&Number.isFinite(price)&&Number.isFinite(quantity)){
+        byDate.set(p.date,price*quantity);
+      }
+    });
+    return {
+      label:x.name,
+      data:dates.map(date=>byDate.has(date)?byDate.get(date):null),
+      borderColor:palette[i%palette.length],
+      backgroundColor:palette[i%palette.length],
+      pointRadius:4,
+      pointHoverRadius:6,
+      borderWidth:2,
+      tension:0.2,
+      spanGaps:false
+    };
+  });
+  scatterChart=new Chart(document.getElementById('scatterChart'),{
+    type:'line',
+    data:{labels:dates,datasets},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend},scales:{
+      x:{ticks:{color:'#91a0b8',maxRotation:45,minRotation:20},grid:{color:'#263247'},title:{display:true,text:'Date',color:'#91a0b8'}},
+      y:valueAxis
+    }}
+  });
+}
 function render(){renderMetrics();renderHoldings();renderCharts()}
 function showModal(title,fields,action){document.getElementById('modalTitle').textContent=title;document.getElementById('modalFields').innerHTML=fields;modalAction=action;document.getElementById('modal').classList.add('show')}
 function closeModal(){document.getElementById('modal').classList.remove('show');modalAction=null}
